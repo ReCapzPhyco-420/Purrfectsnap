@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
 
 env:
-  JAVA_HOME: /usr/lib/jvm/temurin-21-amd64
-  ANDROID_HOME: /home/runner/android-sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build:
@@ -29,22 +29,9 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
 
-      - name: Install system deps
-        run: sudo apt-get install -y unzip wget
-
-      - name: Accept SDK licenses manually
+      - name: Install NDK
         run: |
-          mkdir -p $ANDROID_HOME/cmdline-tools
-          wget -q "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
-            -O /tmp/cmdtools.zip
-          unzip -q /tmp/cmdtools.zip -d /tmp/ct_raw
-          mv /tmp/ct_raw/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-          mkdir -p $ANDROID_HOME/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_HOME/licenses/android-sdk-preview-license
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "platforms;android-35" "build-tools;35.0.0" "platform-tools" \
             "ndk;28.2.13676358" \
             --sdk_root=$ANDROID_HOME
 
