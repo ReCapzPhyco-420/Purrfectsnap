@@ -44,7 +44,9 @@ jobs:
         run: sudo apt-get install -y unzip wget
 
       - name: Run stealth build
-        run: bash purrfect-stealth-build.sh
+        run: |
+          sed -i 's|ANDROID_HOME=.*android-sdk.*|ANDROID_HOME=/usr/local/lib/android/sdk|g' purrfect-stealth-build.sh
+          bash purrfect-stealth-build.sh
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
