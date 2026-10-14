@@ -1,0 +1,112 @@
+name: Purrfect Stealth Release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0-stealth)'
+        required: true
+      notes:
+        description: 'Release notes'
+        required: false
+        default: ''
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  # NOTE: JAVA_HOME is intentionally NOT hardcoded. actions/setup-java sets it
+  # to the real hostedtoolcache path, which changes with every JDK update.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install node deps (mirrors upstream release build)
+        run: npm install -g typescript
+
+      - name: Prepare release signing
+        env:
+          PS_BASE_64: ${{ secrets.PS_BASE_64 }}
+          PS_RELEASE_KEY_ALIAS: ${{ secrets.PS_RELEASE_KEY_ALIAS }}
+          PS_RELEASE_KEY_PASSWORD: ${{ secrets.PS_RELEASE_KEY_PASSWORD }}
+          PS_RELEASE_STORE_PASSWORD: ${{ secrets.PS_RELEASE_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for v in PS_BASE_64 PS_RELEASE_KEY_ALIAS PS_RELEASE_KEY_PASSWORD PS_RELEASE_STORE_PASSWORD; do
+            [[ -n "${!v:-}" ]] || { echo "Missing secret: $v" >&2; exit 1; }
+          done
+          mkdir -p ~/.android ~/.gradle
+          printf '%s' "$PS_BASE_64" | base64 --decode > ~/.android/purrfect-release.keystore
+          [[ -s ~/.android/purrfect-release.keystore ]] || { echo "Decoded keystore is empty" >&2; exit 1; }
+          # Upstream's build.gradle.kts reads these via gradleProperty/env,
+          # falling back to ~/.gradle/gradle.properties — and signs the
+          # release build with the release key automatically when present.
+          # Write each value via printf '%s' with the variable as an argument:
+          # the value expands, but its CONTENT is never reinterpreted, so
+          # passwords containing $, backticks, or backslashes land verbatim.
+          # (Quoted heredoc would leave literal $VAR names in the file;
+          # unquoted heredoc would mangle special characters in the values.)
+          {
+            printf 'PS_RELEASE_STORE_PASSWORD=%s\n' "$PS_RELEASE_STORE_PASSWORD"
+            printf 'PS_RELEASE_KEY_PASSWORD=%s\n' "$PS_RELEASE_KEY_PASSWORD"
+            printf 'PS_RELEASE_KEY_ALIAS=%s\n' "$PS_RELEASE_KEY_ALIAS"
+          } > ~/.gradle/gradle.properties
+          echo "Signing prepared"
+
+      - name: Run stealth release build
+        env:
+          STEALTH_BUILD_TYPE: release
+        run: bash purrfect-stealth-build.sh
+
+      - name: Verify APK signature
+        run: |
+          set -euo pipefail
+          APK=$(ls ~/Purrfect-stealth-*-release.apk | head -1)
+          echo "APK: $APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | head -8
+
+      - name: Rename APK for release
+        run: |
+          set -euo pipefail
+          SRC=$(ls ~/Purrfect-stealth-*-release.apk | head -1)
+          mv "$SRC" "$HOME/Purrfect-Stealth-${{ inputs.tag }}.apk"
+          ls -la ~/Purrfect-Stealth-*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purrfect-stealth-${{ inputs.tag }}
+          path: ~/Purrfect-Stealth-*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: purrfect-stealth-${{ inputs.tag }}
+          path: ./apks
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ inputs.tag }}" ./apks/*.apk \
+            --title "${{ inputs.tag }}" \
+            --notes "${{ inputs.notes }}"
